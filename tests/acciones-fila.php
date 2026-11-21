@@ -1,0 +1,74 @@
+<?php
+/** Synthetic in-memory controller contract; no application database or demo data. */
+declare(strict_types=1);
+require __DIR__.'/../app/bootstrap.php';
+$db=new PDO('sqlite::memory:',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+$db->exec('PRAGMA foreign_keys=ON'); Schema::create($db); $m=new Model($db); $controller=new Controller($m);
+foreach(['admin','recepcion','entrenamiento'] as $role) $m->insert('users',['email'=>$role.'@synthetic.invalid','password_hash'=>'unused','role'=>$role]);
+$_SESSION=['uid'=>1,'csrf'=>'synthetic','last_activity'=>time()];
+$n=0;
+function ok(bool $value,string $label): void { global $n; if(!$value) throw new RuntimeException('FAIL '.$label); ++$n; echo "OK $label\n"; }
+function post(string $page,array $d): array { global $controller; return $controller->handle($page,'POST',$d+['csrf'=>'synthetic']); }
+function denied(callable $fn,string $label): void { try { $fn(); } catch(DomainException|RuntimeException $e) { ok(true,$label); return; } throw new Exception('FAIL accepted '.$label); }
+post('clientes',['code'=>'S1','name'=>'Synthetic','administrative'=>'si','evidence'=>'fixture']);
+post('planes',['name'=>'Plan','days'=>'30','amount'=>'10']);
+post('mensualidades',['client_id'=>'1','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'10']);
+post('planes',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+ok($controller->handle('planes','GET',[])['rows']===[],'archived plan excluded');
+ok(count($controller->handle('planes','GET',['archivados'=>'1'])['rows'])===1,'archived plan listed');
+denied(fn()=>post('mensualidades',['client_id'=>'1','plan_id'=>'1','start_date'=>'2026-02-01','end_date'=>'2026-02-28','amount'=>'10']),'archived plan unavailable');
+post('planes',['action'=>'restaurar','id'=>'1']);
+post('planes',['action'=>'editar','id'=>'1','name'=>'Edited','days'=>'31','amount'=>'20']);
+post('clientes',['action'=>'editar','id'=>'1','name'=>'Edited','contact'=>'fixture']);
+post('mensualidades',['action'=>'editar','id'=>'1','client_id'=>'999','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'20']);
+ok((int)$m->one('SELECT client_id FROM memberships WHERE id=1')['client_id']===1,'membership client fixed, own overlap excluded');
+$rows=$controller->handle('mensualidades','GET',[])['rows']; ok(isset($rows[0]['client_id'],$rows[0]['plan_id'],$rows[0]['cliente'],$rows[0]['inicio']),'raw form IDs and visible aliases');
+denied(fn()=>post('clientes',['action'=>'archivar','id'=>'1']),'archive confirmation required');
+post('clientes',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+ok($controller->handle('mensualidades','GET',[])['clients']===[],'archived client absent from options');
+ok($controller->handle('clientes','GET',[])['rows']===[] && count($controller->handle('clientes','GET',['archivados'=>'1'])['rows'])===1,'client archive listing');
+denied(fn()=>post('mensualidades',['action'=>'editar','id'=>'1','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'1']),'inactive client cannot edit period');
+post('clientes',['action'=>'restaurar','id'=>'1']);
+post('mensualidades',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+ok($controller->handle('mensualidades','GET',[])['rows']===[] && count($controller->handle('mensualidades','GET',['archivados'=>'1'])['rows'])===1,'archived period listing');
+post('mensualidades',['client_id'=>'1','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'1']);
+denied(fn()=>post('mensualidades',['action'=>'restaurar','id'=>'1','confirm_overlap'=>'si']),'restore conflicting period rejected even with confirmation');
+post('mensualidades',['action'=>'editar','id'=>'2','plan_id'=>'1','start_date'=>'2026-02-01','end_date'=>'2026-02-28','amount'=>'1']);
+post('clientes',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+denied(fn()=>post('mensualidades',['action'=>'restaurar','id'=>'1']),'cannot restore period with inactive client');
+post('clientes',['action'=>'restaurar','id'=>'1']);
+post('planes',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+denied(fn()=>post('mensualidades',['action'=>'restaurar','id'=>'1']),'cannot restore period with archived plan');
+post('planes',['action'=>'restaurar','id'=>'1']);
+post('mensualidades',['action'=>'restaurar','id'=>'1']);
+denied(fn()=>post('mensualidades',['action'=>'editar','id'=>'2','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'1']),'edit overlapping period requires confirmation');
+post('mensualidades',['action'=>'editar','id'=>'2','plan_id'=>'1','start_date'=>'2026-01-01','end_date'=>'2026-01-31','amount'=>'1','confirm_overlap'=>'si']);
+foreach(['0','-1','1oops',[], '999'] as $id) denied(fn()=>post('planes',['action'=>'archivar','id'=>$id,'confirmar'=>'si']),'invalid or absent ID');
+denied(fn()=>post('planes',['action'=>'archivar','id'=>'1','confirmar'=>'si','csrf'=>'bad']),'CSRF');
+$_SESSION['uid']=2;
+foreach(['clientes','mensualidades'] as $page) foreach(['archivar','restaurar'] as $action) denied(fn()=>post($page,['action'=>$action,'id'=>'1','confirmar'=>'si']),'archive/restore admin only');
+post('clientes',['action'=>'editar','id'=>'1','name'=>'Reception','contact'=>'']);
+post('mensualidades',['action'=>'editar','id'=>'2','plan_id'=>'1','start_date'=>'2026-03-01','end_date'=>'2026-03-31','amount'=>'5']);
+$_SESSION['uid']=1;
+post('clientes',['code'=>'S2','name'=>'Other synthetic','administrative'=>'si','evidence'=>'fixture']);
+denied(fn()=>post('autorizaciones',['action'=>'retirar','id'=>'1','client_id'=>'2']),'consent withdrawal bound to client');
+post('autorizaciones',['action'=>'retirar','id'=>'1','client_id'=>'1']);
+denied(fn()=>post('autorizaciones',['action'=>'restaurar','id'=>'1','client_id'=>'1']),'consent withdrawal irreversible');
+post('mensualidades',['action'=>'archivar','id'=>'2','confirmar'=>'si']);
+denied(fn()=>post('mensualidades',['action'=>'restaurar','id'=>'2']),'restoration requires current administrative consent');
+post('solicitudes',['client_id'=>'1','kind'=>'consulta']);
+denied(fn()=>post('solicitudes',['action'=>'resolver','id'=>'1','client_id'=>'2','resolution'=>'fixture']),'request resolution bound to client');
+post('solicitudes',['action'=>'resolver','id'=>'1','client_id'=>'1','resolution'=>'fixture']);
+foreach(['bitacora','reportes','medidas','autorizaciones','solicitudes'] as $page) denied(fn()=>post($page,['action'=>'archivar','id'=>'1','confirmar'=>'si']),'immutable '.$page);
+post('planes',['action'=>'archivar','id'=>'1','confirmar'=>'si']);
+ok($m->reportSummary()['periods']===2,'historical reports include archived records');
+ok((int)$m->query("SELECT COUNT(*) FROM audit WHERE action='archivar'")->fetchColumn()===7,'transactional audit');
+// Simulate the old schema separately; additive migration must preserve rows and be repeatable.
+$old=new PDO('sqlite::memory:'); $old->exec('CREATE TABLE clients(id INTEGER,active INTEGER); CREATE TABLE plans(id INTEGER); CREATE TABLE memberships(id INTEGER); INSERT INTO plans VALUES(7); INSERT INTO memberships VALUES(8)');
+Schema::migrateRowActions($old); Schema::migrateRowActions($old);
+ok((int)$old->query('SELECT archived FROM plans WHERE id=7')->fetchColumn()===0,'additive migration preserves existing rows');
+$incompatible=new PDO('sqlite::memory:');
+$incompatible->exec('CREATE TABLE plans(id INTEGER,archived TEXT); CREATE TABLE memberships(id INTEGER)');
+denied(fn()=>Schema::migrateRowActions($incompatible),'incompatible pre-existing column rejected');
+ok(!in_array('archived',array_column($incompatible->query('PRAGMA table_info(memberships)')->fetchAll(PDO::FETCH_ASSOC),'name'),true),'migration preflights both tables before DDL');
+echo "PASS $n row-action checks\n";

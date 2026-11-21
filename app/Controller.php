@@ -28,7 +28,8 @@ final class Controller {
         return (float)$v;
     }
     private function id(array $d,string $key='client_id'): int {
-        $v=filter_var($d[$key]??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+        if (!isset($d[$key]) || (!is_int($d[$key]) && !is_string($d[$key]))) throw new DomainException("Identificador $key inválido.");
+        $v=filter_var($d[$key],FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
         if ($v===false) throw new DomainException("Identificador $key inválido.");
         return $v;
     }
@@ -83,12 +84,13 @@ final class Controller {
             return ['redirect'=>$page];
         }
         $rows=[]; $clients=[]; $plans=[]; $history=[];
+        $archived=($data['archivados']??'')==='1';
         switch ($page) {
             case 'clientes':
                 $q=isset($data['q']) && is_string($data['q']) ? trim($data['q']) : '';
-                $rows=$this->m->rows('SELECT id,code AS codigo,name AS nombre,contact AS contacto,active AS activo FROM clients'.($q!==''?' WHERE code=?':'').' ORDER BY id DESC LIMIT 100',$q!==''?[$q]:[]); break;
+                $rows=$this->m->rows('SELECT id,code AS codigo,name AS nombre,contact AS contacto,active AS activo FROM clients WHERE active=?'.($q!==''?' AND code=?':'').' ORDER BY id DESC LIMIT 100',$q!==''?[$archived?0:1,$q]:[$archived?0:1]); break;
             case 'mensualidades':
-                $rows=$this->m->rows('SELECT m.id,c.code AS cliente,m.start_date AS inicio,m.end_date AS vencimiento,m.amount AS valor FROM memberships m JOIN clients c ON c.id=m.client_id ORDER BY m.end_date,m.id');
+                $rows=$this->m->rows('SELECT m.id,m.client_id,m.plan_id,c.code AS cliente,m.start_date AS inicio,m.end_date AS vencimiento,m.amount AS valor FROM memberships m JOIN clients c ON c.id=m.client_id WHERE m.archived=? ORDER BY m.end_date,m.id',[$archived?1:0]);
                 $today=date('Y-m-d'); $week=date('Y-m-d',strtotime('+7 days'));
                 foreach ($rows as &$r) $r['estado']=$r['vencimiento']<$today?'Vencida':($r['vencimiento']<=$week?'Próxima (hoy a +7 días)':'Posterior'); unset($r); break;
             case 'medidas':
@@ -110,20 +112,34 @@ final class Controller {
             case 'solicitudes': $rows=$this->m->rows('SELECT * FROM requests ORDER BY id DESC'); break;
             case 'bitacora': $rows=$this->m->rows('SELECT * FROM audit ORDER BY id DESC LIMIT 200'); break;
             case 'cuentas': $rows=$this->m->rows('SELECT id,email,role,active FROM users'); break;
-            case 'planes': $rows=$this->m->rows('SELECT * FROM plans'); break;
+            case 'planes': $rows=$this->m->rows('SELECT id,name,days,amount FROM plans WHERE archived=?',[$archived?1:0]); break;
         }
-        if (in_array($page,['mensualidades','autorizaciones','solicitudes'],true)) $clients=$this->m->rows('SELECT id,code FROM clients ORDER BY code');
-        if ($page==='mensualidades') $plans=$this->m->rows('SELECT id,name FROM plans');
+        if (in_array($page,['mensualidades','autorizaciones','solicitudes'],true)) $clients=$this->m->rows('SELECT id,code FROM clients WHERE active=1 ORDER BY code');
+        if ($page==='mensualidades') $plans=$this->m->rows('SELECT id,name FROM plans WHERE archived=0');
         return compact('page','rows','clients','plans','u');
     }
     private function mutate(string $page,array $d,int $uid,array $u): void {
         $actions=match($page) {
-            'clientes'=>['crear','editar'], 'autorizaciones'=>['crear','retirar'],
+            'clientes','planes','mensualidades'=>['crear','editar','archivar','restaurar'], 'autorizaciones'=>['crear','retirar'],
             'solicitudes'=>['crear','resolver'], 'cuentas'=>['crear','permiso'],
-            'mensualidades','medidas','planes'=>['crear'], default=>[]
+            'medidas'=>['crear'], default=>[]
         };
         $d['action'] ??= 'crear';
         $action=$this->choice($d,'action',$actions); $id=null; $entity=$page;
+        if (in_array($action,['archivar','restaurar'],true)) {
+            if ($u['role']!=='admin') throw new RuntimeException('Solo administración puede archivar o restaurar.',403);
+            if ($action==='archivar' && ($d['confirmar']??'')!=='si') throw new DomainException('Confirme el archivo explícitamente.');
+            $id=$this->id($d,'id');
+            $table=match($page) {'clientes'=>'clients','planes'=>'plans','mensualidades'=>'memberships'};
+            $row=$this->lockRow($table,$id);
+            $column=$page==='clientes'?'active':'archived';
+            $value=$page==='clientes'?($action==='archivar'?0:1):($action==='archivar'?1:0);
+            if ((int)$row[$column]===$value) throw new DomainException('El registro ya tiene ese estado.');
+            if ($page==='mensualidades' && $action==='restaurar') $this->period($row,$id,true);
+            $this->m->query("UPDATE $table SET $column=? WHERE id=?",[$value,$id]);
+            $this->m->audit($uid,$action,$entity,$id);
+            return;
+        }
         switch ($page) {
             case 'clientes':
                 if ($action==='editar') {
@@ -135,13 +151,15 @@ final class Controller {
                     $this->grant($id,'administrativa',$this->text($d,'evidence',255));
                 } break;
             case 'mensualidades':
-                $cid=$this->id($d); $c=$this->m->lockClient($cid);
-                if (!$c['active'] || !$this->m->consent($cid,'administrativa')) throw new DomainException('Cliente sin autorización administrativa vigente.');
-                $start=$this->date($d,'start_date'); $end=$this->date($d,'end_date');
-                if ($end<$start) throw new DomainException('Vencimiento anterior al inicio.');
-                $pid=$this->id($d,'plan_id'); if (!$this->m->one('SELECT id FROM plans WHERE id=?',[$pid])) throw new DomainException('Plan inexistente.');
-                if ($this->m->one('SELECT id FROM memberships WHERE client_id=? AND start_date<=? AND end_date>=?',[$cid,$end,$start]) && ($d['confirm_overlap']??'')!=='si') throw new DomainException('Periodo solapado: revise y confirme explícitamente.');
-                $id=$this->m->insert('memberships',['client_id'=>$cid,'plan_id'=>$pid,'start_date'=>$start,'end_date'=>$end,'amount'=>$this->number($d,'amount',true)]); break;
+                if ($action==='editar') {
+                    $id=$this->id($d,'id'); $existing=$this->lockRow('memberships',$id);
+                    if ($existing['archived']) throw new DomainException('Restaure el periodo antes de editarlo.');
+                    $d['client_id']=$existing['client_id']; // Never rebind an existing period from HTTP input.
+                }
+                $values=$this->period($d,$id);
+                if ($id===null) $id=$this->m->insert('memberships',$values);
+                else $this->m->query('UPDATE memberships SET plan_id=?,start_date=?,end_date=?,amount=? WHERE id=?',[$values['plan_id'],$values['start_date'],$values['end_date'],$values['amount'],$id]);
+                break;
             case 'medidas':
                 $cid=$this->id($d); $c=$this->m->lockClient($cid); $a=$this->m->consent($cid,'corporal');
                 if (!$c['active'] || !$a) throw new ConsentDenied($cid,'captura_corporal');
@@ -182,10 +200,35 @@ final class Controller {
                 } break;
             case 'planes':
                 $days=$this->id($d,'days'); if ($days>3650) throw new DomainException('Duración máxima: 3650 días.');
-                $id=$this->m->insert('plans',['name'=>$this->text($d,'name',80),'days'=>$days,'amount'=>$this->number($d,'amount',true)]); break;
+                $values=['name'=>$this->text($d,'name',80),'days'=>$days,'amount'=>$this->number($d,'amount',true)];
+                if ($action==='editar') {
+                    $id=$this->id($d,'id'); $this->lockRow('plans',$id);
+                    $this->m->query('UPDATE plans SET name=?,days=?,amount=? WHERE id=?',[...array_values($values),$id]);
+                } else $id=$this->m->insert('plans',$values);
+                break;
             default: throw new RuntimeException('Operación no permitida.',405);
         }
         $this->m->audit($uid,(string)$action,$entity,$id);
+    }
+    /** Table names are internal constants only. */
+    private function lockRow(string $table,int $id): array {
+        $lock=$this->m->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $row=$this->m->one("SELECT * FROM $table WHERE id=?".$lock,[$id]);
+        if (!$row) throw new DomainException('Registro inexistente.');
+        return $row;
+    }
+    private function period(array $d,?int $exclude=null,bool $restore=false): array {
+        $cid=$this->id($d); $c=$this->m->lockClient($cid);
+        if (!$c['active'] || !$this->m->consent($cid,'administrativa')) throw new DomainException('Cliente sin autorización administrativa vigente.');
+        $start=$this->date($d,'start_date'); $end=$this->date($d,'end_date');
+        if ($end<$start) throw new DomainException('Vencimiento anterior al inicio.');
+        $pid=$this->id($d,'plan_id'); $plan=$this->lockRow('plans',$pid);
+        if ($plan['archived']) throw new DomainException('Plan archivado.');
+        // Current locking read, serialized by client: includes a preceding transaction's committed period.
+        $lock=$this->m->db->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?' FOR UPDATE':'';
+        $overlap=$this->m->one('SELECT id FROM memberships WHERE client_id=? AND archived=0 AND start_date<=? AND end_date>=? AND id<>?'.$lock,[$cid,$end,$start,$exclude??0]);
+        if ($overlap && ($restore || ($d['confirm_overlap']??'')!=='si')) throw new DomainException('Periodo solapado: revise y confirme explícitamente.');
+        return ['client_id'=>$cid,'plan_id'=>$pid,'start_date'=>$start,'end_date'=>$end,'amount'=>$this->number($d,'amount',true)];
     }
     private function grant(int $cid,string $kind,string $evidence): int {
         return $this->m->insert('consents',['client_id'=>$cid,'kind'=>$kind,'version'=>'1.0','purpose'=>$kind==='corporal'?'Seguimiento corporal opcional':'Gestión de clientes y vigencias','evidence'=>$evidence,'granted_at'=>date('Y-m-d H:i:s')]);

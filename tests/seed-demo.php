@@ -66,6 +66,19 @@ foreach (['memberships'=>['start_date','end_date'],'consents'=>['granted_at'],'r
 }
 $aged = snapshot($db); [$code,$out] = seed($dsn);
 check($code === 0 && str_contains($out,'no-op') && snapshot($db) === $aged, 'old batch retains original dates');
+// Archival is an operator change, not an incomplete seed to repair or recreate.
+// Each case gets a complete independent batch; rejection must preserve its exact snapshot.
+foreach (['clients','plans','memberships'] as $table) {
+    [$archivedDb,$archivedDsn] = fixture('archived-'.$table);
+    [$code] = seed($archivedDsn);
+    check($code === 0, 'archive fixture initial seed '.$table);
+    $column = $table === 'clients' ? 'active' : 'archived';
+    $value = $table === 'clients' ? 0 : 1;
+    $archivedDb->exec("UPDATE $table SET $column=$value WHERE id=2");
+    $archived = snapshot($archivedDb);
+    [$code,$out,$err] = seed($archivedDsn);
+    check($code !== 0 && $out === '' && snapshot($archivedDb) === $archived, 'archived '.$table.' fails closed without unarchiving, rewriting or recreating rows');
+}
 $db->exec("UPDATE clients SET contact='modified demo' WHERE code='DEMO-T2-03'");
 $changed = snapshot($db); [$code] = seed($dsn);
 check($code !== 0 && snapshot($db) === $changed, 'altered complete batch fails closed, no repair');

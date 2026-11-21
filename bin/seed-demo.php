@@ -8,12 +8,12 @@ function demoRows(DateTimeImmutable $base, array $clients, array $plans): array 
     $date = fn(int $days): string => $base->modify("$days days")->format('Y-m-d');
     $rows = ['clients'=>[], 'plans'=>[], 'memberships'=>[], 'consents'=>[], 'requests'=>[]];
     foreach ([['Mensual',30,50000],['Trimestral',90,135000],['Semanal',7,18000]] as $i=>$plan) {
-        $rows['plans'][] = ['name'=>'DEMO T2 '.$plan[0], 'days'=>$plan[1], 'amount'=>$plan[2]];
+        $rows['plans'][] = ['name'=>'DEMO T2 '.$plan[0], 'days'=>$plan[1], 'amount'=>$plan[2], 'archived'=>0];
     }
     foreach ([-12,-1,0,3,7,8,30,60] as $i=>$offset) {
         $n = $i+1; $client = $clients[$i] ?? 0; $plan = $plans[$i%3] ?? 0;
         $rows['clients'][] = ['code'=>sprintf('DEMO-T2-%02d', $n), 'name'=>sprintf('DEMO Persona ficticia %02d', $n), 'contact'=>'FICTICIO; sin contacto real', 'active'=>1];
-        $rows['memberships'][] = ['client_id'=>$client,'plan_id'=>$plan,'start_date'=>$date($offset-[30,90,7][$i%3]+1),'end_date'=>$date($offset),'amount'=>[50000,135000,18000][$i%3]];
+        $rows['memberships'][] = ['client_id'=>$client,'plan_id'=>$plan,'start_date'=>$date($offset-[30,90,7][$i%3]+1),'end_date'=>$date($offset),'amount'=>[50000,135000,18000][$i%3],'archived'=>0];
         foreach (['administrativa','corporal'] as $kind) {
             $rows['consents'][] = ['client_id'=>$client,'kind'=>$kind,'version'=>'DEMO-T2-v1','purpose'=>'DEMO: simulación ficticia, no autorización real','evidence'=>'DEMO-T2: evidencia sintética sin validez legal','granted_at'=>$date(0).' 09:00:00','withdrawn_at'=>null];
         }
@@ -31,10 +31,11 @@ function demoSelect(PDO $db, string $sql, array $args = []): array {
 
 function demoSame(array $actual, array $expected): bool {
     // PDO MySQL returns numeric columns as strings; normalize numeric fields only.
+    // Keep archive state in the exact comparison: archived fixtures fail closed, never repair.
     $normalize = function(array $rows): array {
         foreach ($rows as &$row) {
             unset($row['id']);
-            foreach (['days','amount','active','client_id','plan_id'] as $key) {
+            foreach (['days','amount','active','archived','client_id','plan_id'] as $key) {
                 if (isset($row[$key])) $row[$key] = (string)(0+$row[$key]);
             }
             ksort($row);

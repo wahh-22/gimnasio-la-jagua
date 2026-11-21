@@ -14,13 +14,15 @@ function runtime(array $s): PDO {
     return new PDO('mysql:host=127.0.0.1;dbname=gimnasio;charset=utf8mb4', 'gimnasio_app', $s['db_password'], [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
 }
 try {
+    if (count($argv)>2 || !in_array($argv[1]??'', ['', '--check', '--migrate-actions'],true)) throw new RuntimeException();
     $check = ($argv[1] ?? '') === '--check';
+    $migrate = ($argv[1] ?? '') === '--migrate-actions';
     $root = new PDO('mysql:unix_socket=/var/run/mysqld/mysqld.sock;charset=utf8mb4', 'root', '', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
     if (!preg_match('/^8\./', (string)$root->query('SELECT VERSION()')->fetchColumn())) throw new RuntimeException();
     $exists = (bool)$root->query("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='gimnasio'")->fetchColumn();
     $accounts = $root->query("SELECT Host FROM mysql.user WHERE User='gimnasio_app'")->fetchAll(PDO::FETCH_COLUMN);
     if (!file_exists(STATE)) {
-        if ($check || $exists || $accounts) throw new RuntimeException();
+        if ($check || $migrate || $exists || $accounts) throw new RuntimeException();
         $s = ['phase'=>'allocated', 'db_password'=>bin2hex(random_bytes(32)),
             'admin_email'=>'admin@sintetico.invalid', 'admin_password'=>bin2hex(random_bytes(24))];
         saveState($s);
@@ -35,11 +37,11 @@ try {
     $grants = [
         'users'=>['SELECT','INSERT','UPDATE'], 'clients'=>['SELECT','INSERT','UPDATE'],
         'consents'=>['SELECT','INSERT','UPDATE'], 'requests'=>['SELECT','INSERT','UPDATE'],
-        'plans'=>['SELECT','INSERT'], 'memberships'=>['SELECT','INSERT'],
+        'plans'=>['SELECT','INSERT','UPDATE'], 'memberships'=>['SELECT','INSERT','UPDATE'],
         'measurements'=>['SELECT','INSERT'], 'audit'=>['SELECT','INSERT'],
     ];
     if ($s['phase'] === 'allocated') {
-        if ($check) throw new RuntimeException();
+        if ($check || $migrate) throw new RuntimeException();
         if (!$exists) $root->exec('CREATE DATABASE gimnasio CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
         $root->exec('USE gimnasio');
         // Setup is NOT a migration. Partial DDL must be reviewed by the operator.
@@ -67,12 +69,35 @@ try {
     $expected = ["GRANT USAGE ON *.* TO `gimnasio_app`@`127.0.0.1`"];
     foreach ($grants as $table=>$permissions) $expected[] = 'GRANT '.implode(', ', $permissions)." ON `gimnasio`.`$table` TO `gimnasio_app`@`127.0.0.1`";
     $actual = $root->query("SHOW GRANTS FOR 'gimnasio_app'@'127.0.0.1'")->fetchAll(PDO::FETCH_COLUMN);
+    // Only the two explicitly reviewed table grants may change during migration.
+    // Accept old or new grants independently so an interrupted GRANT is safely resumable.
+    if ($migrate) {
+        foreach (['plans','memberships'] as $table) {
+            $legacy="GRANT SELECT, INSERT ON `gimnasio`.`$table` TO `gimnasio_app`@`127.0.0.1`";
+            $upgraded="GRANT SELECT, INSERT, UPDATE ON `gimnasio`.`$table` TO `gimnasio_app`@`127.0.0.1`";
+            $actual=array_map(static fn($grant)=>$grant===$legacy?$upgraded:$grant,$actual);
+        }
+    }
     sort($expected); sort($actual);
     if ($expected !== $actual) throw new RuntimeException();
+    if ($migrate) {
+        $root->exec('USE gimnasio');
+        // Validate prerequisites before additive DDL (MySQL commits each ALTER implicitly).
+        $root->query('SELECT active FROM clients LIMIT 0');
+        $root->query('SELECT id,name,days,amount FROM plans LIMIT 0');
+        $root->query('SELECT id,client_id,plan_id,start_date,end_date,amount FROM memberships LIMIT 0');
+        Schema::migrateRowActions($root);
+        foreach (['plans','memberships'] as $table) $root->exec("GRANT SELECT, INSERT, UPDATE ON gimnasio.`$table` TO 'gimnasio_app'@'127.0.0.1'");
+        $verified=$root->query("SHOW GRANTS FOR 'gimnasio_app'@'127.0.0.1'")->fetchAll(PDO::FETCH_COLUMN);
+        sort($verified);
+        if ($expected!==$verified) throw new RuntimeException();
+    }
     $db = runtime($s);
+    $db->query('SELECT archived FROM plans LIMIT 0');
+    $db->query('SELECT archived FROM memberships LIMIT 0');
     foreach ($grants as $table=>$permissions) $db->query("SELECT * FROM `$table` LIMIT 0");
     if (!$db->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()) throw new RuntimeException();
-    if (!$check) {
+    if (!$check && !$migrate) {
         $config = "SetEnv APP_DSN mysql:host=127.0.0.1;dbname=gimnasio;charset=utf8mb4\nSetEnv APP_DB_USER gimnasio_app\nSetEnv APP_DB_PASSWORD ".$s['db_password']."\nSetEnv APP_SESSION_PATH /var/lib/gimnasio/sessions\n";
         if (file_put_contents('/etc/gimnasio/apache-env.conf', $config, LOCK_EX) === false) throw new RuntimeException();
         chmod('/etc/gimnasio/apache-env.conf', 0600);
