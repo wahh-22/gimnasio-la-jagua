@@ -7,6 +7,8 @@ host=$1
 for service in mysql apache2 caddy; do systemctl is-active --quiet "$service"; done
 php -r 'foreach (["pdo_mysql", "mbstring", "session"] as $m) if (!extension_loaded($m)) exit(1); if (PHP_VERSION_ID < 80300 || PHP_VERSION_ID >= 80400) exit(1);'
 php /srv/gimnasio/deploy/provision.php --check
+effective=$(mysql --batch --skip-column-names -e 'SELECT @@max_connections, @@innodb_buffer_pool_size, @@performance_schema, @@bind_address')
+[[ $effective == $'20\t134217728\t0\t127.0.0.1' ]] || { echo 'Unexpected effective MySQL configuration' >&2; exit 1; }
 apache2ctl configtest
 apache2ctl -M 2>/dev/null | grep -q evasive20_module
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

@@ -49,6 +49,7 @@ table_open_cache = 400
 tmp_table_size = 8M
 max_heap_table_size = 8M
 MYSQL
+chmod 0644 /etc/mysql/mysql.conf.d/zz-gimnasio.cnf
 systemctl enable mysql
 systemctl restart mysql
 php /srv/gimnasio/deploy/provision.php
