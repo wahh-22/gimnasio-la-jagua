@@ -22,6 +22,20 @@ dialog::backdrop{background:var(--backdrop)}
 p[role=alert]{background:var(--alert);border-left-color:var(--danger)}
 .header-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem}
 #theme-toggle[hidden]{display:none}
+/* One line-icon family: 24px viewBox, currentColor, no external fonts. */
+.icon{width:1.25rem;height:1.25rem;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;pointer-events:none}
+button,nav a,.module h2,.module-action{display:inline-flex;align-items:center;gap:.6rem}
+nav a,.module h2{justify-content:flex-start}
+.module h2 span{min-width:0}
+.module-action .icon{width:1rem;height:1rem}
+#theme-toggle{width:46px;min-width:46px;padding:0;justify-content:center}
+.theme-moon{display:none}
+:root[data-theme=light] .theme-sun{display:none}
+:root[data-theme=light] .theme-moon{display:inline-block}
+aside .session-action{margin-top:1.2rem;padding-top:1rem}
+aside .session-action form{display:block}
+aside .session-action button{width:100%;justify-content:flex-start;text-align:left}
+@media(max-width:760px){aside .session-action{margin-top:.75rem;padding-top:.75rem}aside .session-action button{width:auto;min-width:150px}}
 /* Native meter defaults ignore accent-color on some engines. */
 .report-table meter{appearance:none;background:var(--soft);border-radius:7px;overflow:hidden;border:1px solid var(--control-line)}
 .report-table meter::-webkit-meter-bar{background:var(--soft);border:0;border-radius:0}

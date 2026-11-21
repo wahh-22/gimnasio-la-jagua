@@ -76,12 +76,13 @@ try {
   }
   async function screenshot(name) { const shot = await cdp('Page.captureScreenshot', { captureBeyondViewport: true }); await writeFile(path.join(run, name), Buffer.from(shot.data, 'base64')); }
   async function key(key, code, windowsVirtualKeyCode) {
-    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode });
+    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode, ...(key === 'Enter' ? { text: '\r' } : {}) });
     await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode });
   }
   async function openForm(name) {
     await js(`(() => { const f=document.querySelector('[name=${name}]').form;const d=f.closest('dialog');if(!d.open)document.querySelector('[aria-controls="'+d.id+'"]').click(); })()`);
     assert(await js(`document.querySelector('[name=${name}]').closest('dialog').matches(':modal')`), `Diálogo modal: ${name}`);
+    assert(await js(`(() => {const d=document.querySelector('[name=${name}]').closest('dialog');return [...d.querySelectorAll('button'),document.querySelector('[aria-controls="'+d.id+'"]')].every(b=>!!b.querySelector('svg[aria-hidden=true] use') && !!b.textContent.trim())})()`),'S1: acciones de negocio, abrir y cancelar con iconos y etiquetas');
   }
   async function modalChecks(name) {
     await openForm(name);
@@ -107,9 +108,13 @@ try {
   await navigate(`${base}/?page=inicio`);
   assert.equal(await js(`getComputedStyle(document.documentElement).colorScheme`), 'dark', 'Plataforma oscura por defecto');
   assert(await js(`document.querySelector('#theme-toggle').getAttribute('aria-pressed')==='true'`));
+  assert(await js(`(() => {const b=document.querySelector('#theme-toggle');return !b.textContent.trim() && b.getAttribute('aria-label')==='Modo oscuro' && b.title==='Cambiar a modo claro' && !!b.querySelector('svg.theme-sun use')})()`), 'S1: tema solo iconos, estado nombrado y acción clara');
   await js(`document.querySelector('#theme-toggle').focus()`);
   await key(' ', 'Space', 32);
   assert(await js(`document.documentElement.dataset.theme==='light' && document.querySelector('#theme-toggle').getAttribute('aria-pressed')==='false'`), 'Toggle de teclado y estado accesible');
+  await key('Enter','Enter',13);
+  assert.equal(await js(`document.documentElement.dataset.theme`),'dark','Enter alterna el botón nativo');
+  await key(' ', 'Space', 32);
   await navigate(`${base}/?page=privacidad`);
   assert.equal(await js(`document.documentElement.dataset.theme`), 'light', 'Preferencia persiste entre páginas');
   await cdp('Page.reload');
@@ -140,6 +145,7 @@ try {
       await js(`document.querySelector('#theme-toggle').click()`);
       assert.equal(await js(`document.documentElement.dataset.theme`),theme,'Toggle real en móvil y escritorio');
       assert(await js(`(() => {const b=document.querySelector('#theme-toggle');const r=b.getBoundingClientRect();return b.getAttribute('aria-pressed')===String(document.documentElement.dataset.theme==='dark')&&r.height>=44&&r.left>=0&&r.right<=innerWidth})()`),'Estado y tamaño accesible del toggle');
+      assert(await js(`(() => {const b=document.querySelector('#theme-toggle');const icon=b.querySelector(document.documentElement.dataset.theme==='dark'?'.theme-sun':'.theme-moon');return getComputedStyle(icon).display!=='none' && b.title===(document.documentElement.dataset.theme==='dark'?'Cambiar a modo claro':'Cambiar a modo oscuro') && [...document.querySelectorAll('nav svg,.module svg')].every(s=>getComputedStyle(s).stroke==='currentcolor' || getComputedStyle(s).stroke===getComputedStyle(s).color)})()`),'S1: sol/luna y trazos heredan contraste en ambos temas');
       await contrastChecks();
       await screenshot(`${width}-inicio-${theme}.png`);
       await navigate(`${base}/?page=privacidad`);
@@ -147,6 +153,8 @@ try {
       await contrastChecks();
       await navigate(`${base}/?page=inicio`);
     }
+    assert(await js(`(() => {const forms=document.querySelectorAll('form[action="?page=salir"]');const f=forms[0];const b=f?.querySelector('button');const r=b?.getBoundingClientRect();return forms.length===1 && !!f.closest('aside') && !f.closest('main,dialog') && f.method==='post' && !!f.querySelector('[name=csrf]')?.value && b.textContent==='Cerrar sesión' && !!b.querySelector('svg use') && r.height>=44 && r.left>=0 && r.right<=innerWidth})()`), 'S2: única salida POST/CSRF en aside, accesible en ambos tamaños');
+    assert(await js(`[...document.querySelectorAll('nav a,.module')].every(a=>!!a.querySelector('svg[aria-hidden=true] use') && !!a.textContent.trim())`), 'S1: navegación y módulos con iconos decorativos y texto');
     await screenshot(`${width}-inicio.png`);
     await navigate(`${base}/?page=reportes`);
     assert(await js(`document.querySelector('nav [aria-current=page]').textContent==='Reportes' && document.querySelector('[data-kpi=periods]').textContent==='0'`), 'Reportes vacío y navegación activa');
@@ -187,6 +195,12 @@ try {
     assert.equal(await js(`document.querySelectorAll('tbody tr').length`), 0);
     assert(await js(`document.body.innerText.includes('No hay registros para esta consulta.')`));
     row.missingCode = 'sin filas, mensaje de ausencia presente'; row.status = 'PASS';
+    await submit(`document.querySelector('aside form[action="?page=salir"] button').click()`, `location.search==='?page=ingreso'`);
+    assert.equal(await js(`document.querySelectorAll('form[action="?page=salir"]').length`),0,'S2: salida real elimina la sesión');
+    await navigate(`${base}/?page=clientes`);
+    assert(!await js(`!!document.querySelector('[name=code]')`),'S2: recurso protegido no disponible tras salir');
+    await navigate(`${base}/?page=ingreso`);
+    await submit(`document.querySelector('[name=email]').value='cp12@example.invalid';document.querySelector('[name=password]').value='Synthetic-CP12-only-2026';document.querySelector('[name=email]').form.requestSubmit()`, `location.search==='?page=inicio'`);
   }
   // Every admin data-entry action receives a titled native dialog, including long forms.
   report.dialogPages=[];

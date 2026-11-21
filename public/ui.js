@@ -14,6 +14,8 @@
     const apply = value => {
       root.dataset.theme = value;
       toggle.setAttribute('aria-pressed', String(value === 'dark'));
+      // Stable toggle name describes the pressed state; tooltip describes the next action.
+      toggle.title = value === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
     };
     apply(theme);
     toggle.hidden = false;
@@ -30,6 +32,19 @@
     });
   });
 })();
+// First-party sprite shared with the PHP-rendered controls (no icon font or runtime dependency).
+function actionIcon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('icon');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  svg.setAttribute('width', '24');
+  svg.setAttribute('height', '24');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `/icons.svg?v=iconos-20261121-1#${name}`);
+  svg.append(use);
+  return svg;
+}
 // Progressive enhancement: server-rendered forms remain usable without JavaScript.
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof HTMLDialogElement === 'undefined' || !HTMLDialogElement.prototype.showModal) return;
@@ -57,6 +72,8 @@ document.addEventListener('DOMContentLoaded', () => {
     trigger.type = 'button';
     trigger.className = action === 'buscar' ? 'secondary form-trigger' : 'form-trigger';
     trigger.textContent = title;
+    const symbols = { buscar: 'search', crear: page === 'ingreso' ? 'login' : 'plus', editar: 'edit', retirar: 'stop', resolver: 'check', permiso: 'key' };
+    trigger.prepend(actionIcon(symbols[action] || 'file'));
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', dialog.id);
     // Existing headings describe these same actions in the no-JS presentation.
@@ -71,6 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cancel.type = 'button';
     cancel.className = 'secondary';
     cancel.textContent = 'Cancelar';
+    cancel.prepend(actionIcon('close'));
     form.append(cancel);
     trigger.addEventListener('click', () => dialog.showModal());
     cancel.addEventListener('click', () => dialog.close());
