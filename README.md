@@ -48,6 +48,18 @@ Requiere `pdo_sqlite`. No usar el mismo archivo/base para pruebas y demostració
 7. Administración recibe solicitudes de consulta/corrección/supresión y documenta decisión/fundamento. **Resolver no ejecuta una supresión**: la eliminación/anonimización efectiva y el tratamiento de respaldos están pendientes de procedimiento e implementación. No confundir desactivación, retiro o cierre con eliminación.
 8. Administración consulta bitácora (últimos 200 eventos). Contiene usuario, fecha, acción, entidad, ID y resultado; no nombres, contraseñas ni valores corporales. Altas, ediciones, permisos, retiros, ingreso, cierre, consultas corporales y accesos denegados se registran. No hay endpoint de edición de bitácora. Cada mutación de negocio y su evento son atómicos.
 
+### Acciones por registro
+
+En Clientes, Planes y Mensualidades, abra **Acciones** en la fila elegida para editar los valores precargados; no se escribe el ID. El código del cliente y el cliente de un periodo no se cambian. Solo administración ve **Archivar registro** (exige confirmar la identidad mostrada) y **Restaurar registro**. Los enlaces **Activos / Archivados** permiten recuperar registros sin borrar historial.
+
+Retirar autorización, resolver solicitud y cambiar permisos/bloquear cuenta también parten de la fila y quedan ligados a su titular/registro. No se ofrece cambiar el propio acceso, resolver solicitudes resueltas ni retirar una autorización ya retirada. El retiro es irreversible. Bitácora, reportes e historial corporal siguen sin acciones para modificar registros anteriores.
+
+En móvil (hasta 760 px), las tablas con acciones presentan cada registro como un bloque de campos etiquetados: los datos y **Acciones** caben sin desplazamiento horizontal. En escritorio se conserva la comparación por columnas. Las tablas de solo lectura no cambian.
+
+Con JavaScript, las acciones abren diálogos nativos con foco contenido y regreso al botón al cancelar/Escape. Sin JavaScript, **Acciones** despliega los mismos formularios HTML completos y precargados, con CSRF e identificadores ocultos. Los errores del servidor siguen siendo respuestas de página (no conservan un borrador tras enviar).
+
+El runner `tests/browser/cp12.mjs` comprueba también límites y tamaño táctil de las acciones expandidas en móvil/escritorio, ausencia de scroll horizontal en registros móviles y controles de fila sin JS dentro del viewport. Incluye regresiones de selección por fila, precarga/escape, archivo/restauración en los tres módulos, confirmación, teclado/foco a 360/1366 px, retiro/resolución/permisos, protección del propio acceso, recepción sin archivo y edición sin JavaScript. Ejecutarlo solo en su base aislada; genera `var/test-browser-*`.
+
 ## Arquitectura y controles
 
 - `public/index.php`: sesión estricta, cookie HttpOnly/SameSite, CSRF para POST, encabezados y manejo de errores sin SQL/credenciales.

@@ -52,33 +52,37 @@ document.addEventListener('DOMContentLoaded', () => {
   const titles = {
     ingreso: { crear: 'Iniciar sesión' },
     clientes: { crear: 'Registrar cliente', editar: 'Actualizar cliente', buscar: 'Buscar cliente por código' },
-    mensualidades: { crear: 'Registrar nuevo periodo' },
+    mensualidades: { crear: 'Registrar nuevo periodo', editar: 'Editar periodo' },
     medidas: { crear: 'Añadir medición histórica', buscar: 'Consultar historial corporal' },
     autorizaciones: { crear: 'Registrar autorización', retirar: 'Retirar autorización' },
     solicitudes: { crear: 'Registrar solicitud', resolver: 'Documentar resolución' },
     cuentas: { crear: 'Crear cuenta', permiso: 'Cambiar permisos o bloquear cuenta' },
-    planes: { crear: 'Crear plan' }
+    planes: { crear: 'Crear plan', editar: 'Editar plan' }
   };
   document.querySelectorAll('form[data-entry]').forEach((form, index) => {
     const action = form.method === 'get' ? 'buscar' : form.elements.action?.value || 'crear';
-    const title = titles[page]?.[action] || 'Completar formulario';
+    const title = ({ archivar: 'Archivar registro', restaurar: 'Restaurar registro' })[action] || titles[page]?.[action] || 'Completar formulario';
+    const context = form.querySelector('.row-context')?.textContent;
     const dialog = document.createElement('dialog');
     dialog.id = `formulario-${index}`;
     const heading = document.createElement('h2');
     heading.id = `${dialog.id}-titulo`;
-    heading.textContent = title;
+    heading.textContent = context ? `${title} · ${context}` : title;
     dialog.setAttribute('aria-labelledby', heading.id);
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = action === 'buscar' ? 'secondary form-trigger' : 'form-trigger';
     trigger.textContent = title;
-    const symbols = { buscar: 'search', crear: page === 'ingreso' ? 'login' : 'plus', editar: 'edit', retirar: 'stop', resolver: 'check', permiso: 'key' };
+    if (context) trigger.setAttribute('aria-label', `${title} · ${context}`);
+    const symbols = { buscar: 'search', crear: page === 'ingreso' ? 'login' : 'plus', editar: 'edit', retirar: 'stop', resolver: 'check', permiso: 'key', archivar: 'stop', restaurar: 'plus' };
     trigger.prepend(actionIcon(symbols[action] || 'file'));
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', dialog.id);
     // Existing headings describe these same actions in the no-JS presentation.
     if (form.previousElementSibling?.tagName === 'H3') form.previousElementSibling.hidden = true;
     form.before(trigger, dialog);
+    // Keep row dialogs outside scrolling tables/details so native modal layout is unconstrained.
+    if (context) document.body.append(dialog);
     dialog.append(heading, form);
     const note = document.createElement('p');
     note.className = 'dialog-note';

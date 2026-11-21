@@ -185,7 +185,7 @@ try {
     await submit(`(() => {const f=document.querySelector('input[name=q]').form;f.elements.q.value='${code}';f.requestSubmit();})()`, `location.search.includes('q=${code}') && document.querySelectorAll('tbody tr').length === 1`);
     row.consulted = await js(`document.querySelector('tbody').innerText`);
     assert(row.consulted.includes(code) && row.consulted.includes(name));
-    row.layout = await js(`({viewport:innerWidth,document:document.documentElement.scrollWidth,table:document.querySelector('.table').clientWidth,tableContent:document.querySelector('.table').scrollWidth,invalidControls:[...document.querySelectorAll('input:not([type=hidden]),button,select')].filter(e=>{const r=e.getBoundingClientRect();return r.left<0||r.right>innerWidth}).map(e=>e.name||e.innerText)})`);
+    row.layout = await js(`({viewport:innerWidth,document:document.documentElement.scrollWidth,table:document.querySelector('.table').clientWidth,tableContent:document.querySelector('.table').scrollWidth,invalidControls:[...document.querySelectorAll('input:not([type=hidden]),button,select')].filter(e=>{const r=e.getBoundingClientRect();return r.left<0||r.right>innerWidth}).map(e=>({name:e.name||e.innerText,tag:e.tagName,rect:{left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,width:e.getBoundingClientRect().width},inClosedDetails:!!e.closest('details:not([open])')}))})`);
     assert.equal(row.layout.viewport, width);
     assert(row.layout.document <= width, 'Desbordamiento de página');
     assert.deepEqual(row.layout.invalidControls, [], 'Controles fuera del viewport');
@@ -285,6 +285,130 @@ try {
     assert(await js(`getComputedStyle(document.querySelector('aside')).display==='none' && [...document.querySelectorAll('[data-band]')].every(e=>e.getBoundingClientRect().width>0)`), 'Conteos visibles para imprimir');
     await cdp('Emulation.setEmulatedMedia',{media:''});
     report.reportes.push({width,status:'PASS',clients:2,periods:4,soon:2});
+  }
+  // Row transactions: use only this runner's isolated synthetic database.
+  async function openRow(action, index=0) {
+    await js(`(() => {const f=[...document.querySelectorAll('form[data-entry]')].filter(f=>f.elements.action?.value===${JSON.stringify(action)})[${index}];const d=f.closest('dialog');const b=document.querySelector('[aria-controls="'+d.id+'"]');b.closest('details').open=true;b.focus();b.click()})()`);
+    assert(await js(`document.querySelector('dialog[open]').matches(':modal') && document.querySelector('dialog[open]').contains(document.activeElement)`));
+    assert(await js(`document.querySelector('dialog[open] [name=id]').type==='hidden' && !document.querySelector('input[name=id]:not([type=hidden])')`),'Identificador ligado a la fila, nunca escrito');
+  }
+  async function saveRow(expected) {
+    await submit(`document.querySelector('dialog[open] form').requestSubmit()`,`!document.querySelector('dialog[open]') && (${expected})`);
+  }
+  report.rowLayouts=[];
+  for(const width of [360,1366]) {
+    await cdp('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    for(const page of ['clientes','planes','mensualidades','autorizaciones','solicitudes','cuentas']) {
+      await navigate(`${base}/?page=${page}`);
+      await js(`[...document.querySelectorAll('.row-actions')].forEach(d=>d.open=true)`);
+      const layout=await js(`(() => {const t=document.querySelector('.row-records');return {width:innerWidth,table:t?{width:t.clientWidth,content:t.scrollWidth}:null,controls:[...document.querySelectorAll('.row-actions summary,.row-actions button')].map(e=>{const r=e.getBoundingClientRect();return {name:e.textContent.trim(),left:r.left,right:r.right,height:r.height}})}})()`);
+      assert(layout.controls.every(r=>r.left>=0&&r.right<=width&&r.height>=44),'Todas las acciones expandidas caben y tienen objetivos táctiles de 44px');
+      if(width===360 && layout.table) assert(layout.table.content<=layout.table.width,'Registros móviles completos sin scroll horizontal');
+      report.rowLayouts.push({page,...layout});
+      if(page==='clientes'||(width===360&&page==='mensualidades')) await screenshot(`${width}-${page}-acciones.png`);
+    }
+  }
+  report.rowActions=[];
+  for(const width of [360,1366]) {
+    await cdp('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    await navigate(`${base}/?page=clientes`);
+    assert(await js(`!![...document.querySelectorAll('th')].find(h=>h.textContent==='Acciones')`));
+    await js(`document.querySelector('summary').focus()`);
+    await key('Enter','Enter',13);
+    assert(await js(`document.querySelector('details').open`),'Acciones accesibles con teclado');
+    await openRow('editar');
+    for(let i=0;i<8;i++) {
+      await key('Tab','Tab',9);
+      assert(await js(`document.querySelector('dialog[open]').contains(document.activeElement)`),'Tab permanece en la edición de fila');
+    }
+    assert(await js(`document.querySelector('dialog[open] [name=name]').value.includes('Cliente') && !document.querySelector('dialog[open] [name=code]')`),'Nombre precargado y código inmutable');
+    await key('Escape','Escape',27);
+    assert(await js(`!document.querySelector('dialog[open]') && document.activeElement.hasAttribute('aria-controls')`),'Foco devuelto a la acción de fila');
+    await openRow('archivar');
+    assert(await js(`!document.querySelector('dialog[open] form').checkValidity() && document.querySelector('dialog[open] .row-context').textContent.includes('CP12-')`),'Confirmación obligatoria con identidad visible');
+    await key('Escape','Escape',27);
+    assert(await js(`document.querySelectorAll('tbody tr').length===2`),'Cancelar archivo conserva las filas');
+    report.rowActions.push({width,status:'PASS',checks:'prefill, hidden ID, confirmation, Escape/focus'});
+  }
+  await openRow('editar');
+  const editedName='Cliente <img src=x onerror=alert(1)> & sintético';
+  await js(`document.querySelector('dialog[open] [name=name]').value=${JSON.stringify(editedName)}`);
+  await saveRow(`document.querySelector('tbody').textContent.includes('onerror=alert(1)')`);
+  assert(await js(`!document.querySelector('tbody img') && !document.querySelector('.row-context img')`),'Datos escapados en tabla y formularios');
+  await openRow('archivar');
+  const archivedID=await js(`document.querySelector('dialog[open] [name=id]').value`);
+  await js(`document.querySelector('dialog[open] [name=confirmar]').checked=true`);
+  await saveRow(`document.querySelectorAll('tbody tr').length===1`);
+  await navigate(`${base}/?page=clientes&archivados=1`);
+  assert(await js(`document.querySelectorAll('tbody tr').length===1 && ![...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='editar')`));
+  await openRow('restaurar');
+  assert.equal(await js(`document.querySelector('dialog[open] [name=id]').value`),archivedID);
+  await saveRow(`location.search==='?page=clientes' && document.querySelectorAll('tbody tr').length===2`);
+  await navigate(`${base}/?page=planes`);
+  await openRow('editar');
+  assert(await js(`document.querySelector('dialog[open] [name=days]').value==='30' && Number(document.querySelector('dialog[open] [name=amount]').value)===50000`));
+  await js(`document.querySelector('dialog[open] [name=name]').value='Plan actualizado'`);
+  await saveRow(`document.querySelector('tbody').textContent.includes('Plan actualizado')`);
+  await navigate(`${base}/?page=mensualidades`);
+  assert(await js(`![...document.querySelectorAll('th')].some(h=>['Plan_id','ID del cliente'].includes(h.textContent))`),'IDs relacionales fuera de la tabla');
+  await openRow('editar');
+  assert(await js(`(() => {const f=document.querySelector('dialog[open] form');return f.elements.client_id.type==='hidden' && !!f.elements.plan_id.value && !!f.elements.start_date.value && !!f.elements.end_date.value && f.elements.amount.value==='1' && !f.elements.confirm_overlap.checked})()`),'Periodo precargado y cliente fijo');
+  await js(`document.querySelector('dialog[open] [name=amount]').value='2'`);
+  await saveRow(`[...document.querySelectorAll('tbody tr')].some(r=>r.textContent.includes('2')) && !document.querySelector('[role=alert]')`);
+  // Archive/restore is available on both plans and monthly periods, never delete.
+  for(const page of ['planes','mensualidades']) {
+    await navigate(`${base}/?page=${page}`);
+    await openRow('archivar');
+    const id=await js(`document.querySelector('dialog[open] [name=id]').value`);
+    await js(`document.querySelector('dialog[open] [name=confirmar]').checked=true`);
+    await saveRow(`![...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='archivar' && f.elements.id.value===${JSON.stringify(id)})`);
+    await navigate(`${base}/?page=${page}&archivados=1`);
+    await openRow('restaurar');
+    assert.equal(await js(`document.querySelector('dialog[open] [name=id]').value`),id);
+    await saveRow(`location.search===${JSON.stringify('?page='+page)}`);
+  }
+  await navigate(`${base}/?page=autorizaciones`);
+  await openRow('retirar');
+  const withdrawnID=await js(`document.querySelector('dialog[open] [name=id]').value`);
+  assert(await js(`document.querySelector('dialog[open] [name=client_id]').type==='hidden' && document.querySelector('dialog[open]').textContent.includes('irreversible')`));
+  await saveRow(`![...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='retirar' && f.elements.id.value===${JSON.stringify(withdrawnID)})`);
+  await navigate(`${base}/?page=solicitudes`);
+  await openForm('kind');
+  await submit(`document.querySelector('dialog[open] form').requestSubmit()`,`!!document.querySelector('tbody tr')`);
+  await openRow('resolver');
+  assert(await js(`document.querySelector('dialog[open] [name=client_id]').type==='hidden'`));
+  await js(`document.querySelector('dialog[open] [name=resolution]').value='Consulta sintética atendida'`);
+  await saveRow(`document.querySelector('tbody').textContent.includes('Consulta sintética atendida')`);
+  assert(!await js(`[...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='resolver')`));
+  await navigate(`${base}/?page=cuentas`);
+  assert(await js(`![...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='permiso' && f.querySelector('.row-context').textContent.includes('cp12@example.invalid'))`),'No se ofrece cambiar el propio acceso');
+  await openRow('permiso');
+  assert(await js(`!!document.querySelector('dialog[open] [name=role]').value && document.querySelector('dialog[open] [name=active]').value==='1'`));
+  await js(`document.querySelector('dialog[open] [name=active]').value='0'`);
+  await saveRow(`!document.querySelector('[role=alert]')`);
+  await openRow('permiso');
+  assert(await js(`document.querySelector('dialog[open] [name=active]').value==='0'`),'Bloqueo ligado a la cuenta seleccionada');
+  await js(`document.querySelector('dialog[open] [name=active]').value='1'`);
+  await saveRow(`!document.querySelector('[role=alert]')`);
+  for(const page of ['bitacora','reportes']) {
+    await navigate(`${base}/?page=${page}`);
+    assert(!await js(`!!document.querySelector('.row-actions')`),'Registros inmutables sin acciones de mutación');
+  }
+  // The same selected-row edit remains functional with scripting disabled.
+  await cdp('Emulation.setScriptExecutionDisabled',{value:true});
+  await navigate(`${base}/?page=clientes`);
+  assert(await js(`!document.querySelector('dialog') && !!document.querySelector('details form [name=id][type=hidden]')`));
+  await cdp('Emulation.setDeviceMetricsOverride',{width:360,height:900,deviceScaleFactor:1,mobile:false});
+  const noJSLayout=await js(`(() => {const d=document.querySelector('.row-actions');d.open=true;return [...d.querySelectorAll('input:not([type=hidden]),select,button')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right}})})()`);
+  assert(noJSLayout.length>0&&noJSLayout.every(r=>r.left>=0&&r.right<=360),'Formularios de fila sin JS caben en móvil');
+  await screenshot('360-acciones-sin-js.png');
+  await submit(`(() => {const f=[...document.querySelectorAll('details form')].find(f=>f.elements.action.value==='editar');f.closest('details').open=true;f.elements.contact.value='Contacto sin JS';f.requestSubmit()})()`,`document.querySelector('tbody').textContent.includes('Contacto sin JS')`);
+  await cdp('Emulation.setScriptExecutionDisabled',{value:false});
+  await navigate(`${base}/?page=ingreso`);
+  await submit(`document.querySelector('[name=email]').value='recepcion@example.invalid';document.querySelector('[name=password]').value='Synthetic-role-only-2026';document.querySelector('[name=email]').form.requestSubmit()`,`location.search==='?page=inicio'`);
+  for(const page of ['clientes','mensualidades']) {
+    await navigate(`${base}/?page=${page}`);
+    assert(await js(`[...document.querySelectorAll('form[data-entry]')].some(f=>f.elements.action?.value==='editar') && ![...document.querySelectorAll('form[data-entry]')].some(f=>['archivar','restaurar'].includes(f.elements.action?.value))`),'Recepción edita sin archivo/restauración');
   }
   report.status = 'PASS Chrome; Firefox pendiente';
   await writeFile(path.join(run, 'chrome.log'), chromeLog);
