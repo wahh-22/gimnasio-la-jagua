@@ -1,6 +1,37 @@
 'use strict';
-// Progressive enhancement: server-rendered forms remain usable without JavaScript.
+// Run in the head before CSS paints: dark is the product default, not an OS preference.
 (() => {
+  const root = document.documentElement;
+  let theme = 'dark';
+  try {
+    const saved = localStorage.getItem('gimnasio-theme');
+    if (saved === 'light' || saved === 'dark') theme = saved;
+  } catch { /* Storage can be denied; the page and toggle still work. */ }
+  root.dataset.theme = theme;
+  document.addEventListener('DOMContentLoaded', () => {
+    const toggle = document.getElementById('theme-toggle');
+    if (!toggle) return;
+    const apply = value => {
+      root.dataset.theme = value;
+      toggle.setAttribute('aria-pressed', String(value === 'dark'));
+    };
+    apply(theme);
+    toggle.hidden = false;
+    toggle.addEventListener('click', () => {
+      theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      apply(theme);
+      try { localStorage.setItem('gimnasio-theme', theme); } catch { /* Session-only fallback. */ }
+    });
+    window.addEventListener('storage', event => {
+      if (event.key === 'gimnasio-theme' || event.key === null) {
+        theme = event.newValue === 'light' ? 'light' : 'dark';
+        apply(theme);
+      }
+    });
+  });
+})();
+// Progressive enhancement: server-rendered forms remain usable without JavaScript.
+document.addEventListener('DOMContentLoaded', () => {
   if (typeof HTMLDialogElement === 'undefined' || !HTMLDialogElement.prototype.showModal) return;
   const page = new URLSearchParams(location.search).get('page') || 'inicio';
   const titles = {
@@ -62,4 +93,4 @@
       dialog.showModal();
     }
   });
-})();
+});

@@ -62,6 +62,18 @@ try {
     await js(expression);
     await waitFor(async () => await js(`document.readyState === 'complete' && (${expected})`));
   }
+  async function contrastChecks() {
+    const failures = await js(`(() => {
+      const luminance = rgb => {const c=rgb.match(/[\\d.]+/g).slice(0,3).map(v=>{v=Number(v)/255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4});return c[0]*.2126+c[1]*.7152+c[2]*.0722};
+      const ratio=(a,b)=>{a=luminance(a);b=luminance(b);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)};
+      return [...document.querySelectorAll('h1,h2,h3,p,a,button,label,input:not([type=hidden]),select,th,td,dt,dd,caption,.role')].filter(e=>e.getBoundingClientRect().height&&getComputedStyle(e).visibility!=='hidden').flatMap(e=>{
+        const s=getComputedStyle(e);let p=e,bg;
+        while(p){bg=getComputedStyle(p).backgroundColor;if(bg!=='rgba(0, 0, 0, 0)')break;p=p.parentElement}
+        const r=ratio(s.color,bg||'rgb(255,255,255)');return r<4.5?[{element:e.tagName,text:e.textContent.trim().slice(0,45),ratio:r}]:[];
+      });
+    })()`);
+    assert.deepEqual(failures, [], 'Texto visible con contraste mínimo 4.5:1');
+  }
   async function screenshot(name) { const shot = await cdp('Page.captureScreenshot', { captureBeyondViewport: true }); await writeFile(path.join(run, name), Buffer.from(shot.data, 'base64')); }
   async function key(key, code, windowsVirtualKeyCode) {
     await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode });
@@ -90,6 +102,30 @@ try {
     await openForm(name);
     return layout;
   }
+  // Theme contract: default is dark even on a light OS; storage and keyboard are progressive enhancements.
+  await cdp('Emulation.setEmulatedMedia', { features: [{name:'prefers-color-scheme',value:'light'}] });
+  await navigate(`${base}/?page=inicio`);
+  assert.equal(await js(`getComputedStyle(document.documentElement).colorScheme`), 'dark', 'Plataforma oscura por defecto');
+  assert(await js(`document.querySelector('#theme-toggle').getAttribute('aria-pressed')==='true'`));
+  await js(`document.querySelector('#theme-toggle').focus()`);
+  await key(' ', 'Space', 32);
+  assert(await js(`document.documentElement.dataset.theme==='light' && document.querySelector('#theme-toggle').getAttribute('aria-pressed')==='false'`), 'Toggle de teclado y estado accesible');
+  await navigate(`${base}/?page=privacidad`);
+  assert.equal(await js(`document.documentElement.dataset.theme`), 'light', 'Preferencia persiste entre páginas');
+  await cdp('Page.reload');
+  await waitFor(async () => await js(`document.readyState==='complete' && !!document.querySelector('#theme-toggle')`));
+  assert.equal(await js(`document.documentElement.dataset.theme`), 'light', 'Preferencia persiste tras recarga');
+  await js(`localStorage.setItem('gimnasio-theme','invalid')`);
+  await navigate(`${base}/?page=inicio`);
+  assert.equal(await js(`document.documentElement.dataset.theme`), 'dark', 'Valor inválido usa oscuro');
+  const denied = await cdp('Page.addScriptToEvaluateOnNewDocument', {source:`Object.defineProperty(window,'localStorage',{get(){throw new DOMException('denied','SecurityError')}})`});
+  await navigate(`${base}/?page=inicio`);
+  await js(`document.querySelector('#theme-toggle').click()`);
+  assert.equal(await js(`document.documentElement.dataset.theme`),'light','Storage denegado no impide alternar');
+  await cdp('Page.removeScriptToEvaluateOnNewDocument',{identifier:denied.identifier});
+  await navigate(`${base}/?page=inicio`);
+  await js(`localStorage.removeItem('gimnasio-theme')`);
+  report.themePreference='PASS: oscuro predeterminado, teclado, navegación, recarga, valor inválido, storage denegado';
   await navigate(`${base}/?page=ingreso`);
   assert(await js(`!!document.querySelector('dialog[open] input[name=email]')`), 'El ingreso debe abrir un diálogo nativo inmediatamente');
   await submit(`document.querySelector('[name=email]').value='cp12@example.invalid';document.querySelector('[name=password]').value='Synthetic-CP12-only-2026';document.querySelector('form').requestSubmit()`, `location.search === '?page=inicio'`);
@@ -100,6 +136,17 @@ try {
     const loginLayout=await modalChecks('email');
     await submit(`document.querySelector('[name=email]').value='cp12@example.invalid';document.querySelector('[name=password]').value='Synthetic-CP12-only-2026';document.querySelector('[name=email]').form.requestSubmit()`, `location.search === '?page=inicio'`);
     assert(await js(`document.querySelector('nav [aria-current=page]').textContent==='Inicio'&&document.querySelectorAll('.module').length===8`), 'Dashboard de administración y página actual');
+    for(const theme of ['light','dark']) {
+      await js(`document.querySelector('#theme-toggle').click()`);
+      assert.equal(await js(`document.documentElement.dataset.theme`),theme,'Toggle real en móvil y escritorio');
+      assert(await js(`(() => {const b=document.querySelector('#theme-toggle');const r=b.getBoundingClientRect();return b.getAttribute('aria-pressed')===String(document.documentElement.dataset.theme==='dark')&&r.height>=44&&r.left>=0&&r.right<=innerWidth})()`),'Estado y tamaño accesible del toggle');
+      await contrastChecks();
+      await screenshot(`${width}-inicio-${theme}.png`);
+      await navigate(`${base}/?page=privacidad`);
+      assert.equal(await js(`document.documentElement.dataset.theme`),theme,'Preferencia conservada en ambos tamaños');
+      await contrastChecks();
+      await navigate(`${base}/?page=inicio`);
+    }
     await screenshot(`${width}-inicio.png`);
     await navigate(`${base}/?page=reportes`);
     assert(await js(`document.querySelector('nav [aria-current=page]').textContent==='Reportes' && document.querySelector('[data-kpi=periods]').textContent==='0'`), 'Reportes vacío y navegación activa');
@@ -109,6 +156,13 @@ try {
     const createLayout=await modalChecks('code');
     const code = `CP12-${width}`; const name = `Cliente sintético ${width}`;
     const row = { width, height: 900, code, loginLayout, createLayout, status: 'iniciado' }; report.cases.push(row);
+    for (const theme of ['dark','light']) {
+      await js(`document.documentElement.dataset.theme='${theme}'`);
+      assert(await js(`(() => {const d=document.querySelector('dialog[open]');return getComputedStyle(d).backgroundColor===getComputedStyle(d.querySelector('input:not([type=hidden])')).backgroundColor && getComputedStyle(d).color===getComputedStyle(d.querySelector('input:not([type=hidden])')).color})()`), 'Modal y controles comparten tema');
+      await contrastChecks();
+      await screenshot(`${width}-modal-${theme}.png`);
+    }
+    await js(`document.documentElement.dataset.theme='dark'`);
     await screenshot(`${width}-crear-formulario.png`);
     if(width===360) {
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 520, deviceScaleFactor: 1, mobile: false });
@@ -180,7 +234,7 @@ try {
   // No-JS fallback still exposes native forms and accepts the same server workflow.
   await cdp('Emulation.setScriptExecutionDisabled', { value: true });
   await navigate(`${base}/?page=ingreso`);
-  assert(await js(`!document.querySelector('dialog')&&document.querySelector('[name=email]').getBoundingClientRect().height>0`));
+  assert(await js(`!document.querySelector('dialog')&&document.querySelector('[name=email]').getBoundingClientRect().height>0 && getComputedStyle(document.documentElement).colorScheme==='dark' && getComputedStyle(document.querySelector('#theme-toggle')).display==='none'`));
   await submit(`document.querySelector('[name=email]').value='cp12@example.invalid';document.querySelector('[name=password]').value='Synthetic-CP12-only-2026';document.querySelector('[name=email]').form.requestSubmit()`, `location.search==='?page=inicio'`);
   await navigate(`${base}/?page=clientes`);
   assert(await js(`!document.querySelector('dialog')&&document.querySelector('[name=code]').getBoundingClientRect().height>0&&document.querySelector('[name=q]').getBoundingClientRect().height>0`));
@@ -199,8 +253,21 @@ try {
     await navigate(`${base}/?page=reportes`);
     assert(await js(`document.querySelector('[data-kpi=clients]').textContent==='2' && document.querySelector('[data-kpi=periods]').textContent==='4' && document.querySelector('[data-kpi=soon]').textContent==='2'`));
     assert(await js(`document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('.report-charts .table')].every(t=>t.scrollWidth<=t.clientWidth) && [...document.querySelectorAll('meter')].every(m=>!!m.getAttribute('aria-label')) && !!document.querySelector('caption')`), 'Reportes responsive, medidores etiquetados y tablas');
-    await screenshot(`${width}-reportes.png`);
+    for(const theme of ['dark','light']) {
+      await js(`document.documentElement.dataset.theme='${theme}'`);
+      assert(await js(`getComputedStyle(document.documentElement).colorScheme==='${theme}'`));
+      // Chromium does not expose native meter shadow pseudo styles through getComputedStyle.
+      // Verify the authored fill/track contract here, then retain screenshots for visual review.
+      assert(await js(`(() => {const s=getComputedStyle(document.querySelector('meter'));return s.getPropertyValue('--teal').trim()!==s.getPropertyValue('--soft').trim() && [...document.styleSheets].some(sheet=>[...sheet.cssRules].some(r=>r.selectorText?.includes('::-webkit-meter-optimum-value')&&r.style.background==='var(--teal)'))})()`), 'Barras con token de relleno explícito distinto del riel');
+      assert(await js(`document.documentElement.scrollWidth<=innerWidth`), 'Tema sin desbordamiento');
+      await contrastChecks();
+      await screenshot(`${width}-reportes-${theme}.png`);
+    }
+    await js(`document.documentElement.dataset.theme='dark'`);
     await cdp('Emulation.setEmulatedMedia',{media:'print'});
+    assert(await js(`getComputedStyle(document.documentElement).colorScheme==='light' && getComputedStyle(document.documentElement).backgroundColor==='rgb(255, 255, 255)' && getComputedStyle(document.querySelector('h1')).color==='rgb(25, 51, 59)' && getComputedStyle(document.querySelector('.report-kpis>div')).backgroundColor==='rgb(255, 255, 255)'`), 'Impresión clara incluso desde oscuro');
+    await screenshot(`${width}-reportes-print.png`);
+    if(width===1366) {const pdf=await cdp('Page.printToPDF',{printBackground:false});await writeFile(path.join(run,'reportes.pdf'),Buffer.from(pdf.data,'base64'));}
     assert(await js(`getComputedStyle(document.querySelector('aside')).display==='none' && [...document.querySelectorAll('[data-band]')].every(e=>e.getBoundingClientRect().width>0)`), 'Conteos visibles para imprimir');
     await cdp('Emulation.setEmulatedMedia',{media:''});
     report.reportes.push({width,status:'PASS',clients:2,periods:4,soon:2});
