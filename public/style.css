@@ -36,15 +36,15 @@ aside .session-action{margin-top:1.2rem;padding-top:1rem}
 aside .session-action form{display:block}
 aside .session-action button{width:100%;justify-content:flex-start;text-align:left}
 @media(max-width:760px){aside .session-action{margin-top:.75rem;padding-top:.75rem}aside .session-action button{width:auto;min-width:150px}}
-/* Row actions remain ordinary expandable forms without scripting. */
-.row-actions summary{cursor:pointer;min-height:44px;padding:.6rem .8rem;color:var(--teal);border:1px solid var(--control-line);border-radius:8px;white-space:nowrap}
-.row-actions summary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
-.row-action-list{display:grid;gap:.5rem;margin-top:.5rem;min-width:10rem}
-.row-action-list .form-trigger{width:100%;margin:0;text-align:left}
+/* Direct adjacent actions; without scripting the complete forms stay visible. */
+.row-action-list{display:flex;flex-wrap:wrap;gap:.5rem;min-width:6rem}
+.row-action-list .row-icon-action{width:44px;min-width:44px;height:44px;padding:0;margin:0;justify-content:center}
 .row-action-list form{min-width:15rem;max-width:32rem}
+.row-tooltip{position:fixed;z-index:1000;max-width:calc(100vw - 16px);padding:.4rem .65rem;border:1px solid var(--control-line);border-radius:6px;background:var(--surface);color:var(--text);box-shadow:0 3px 12px var(--shadow);font-size:.875rem;overflow-wrap:anywhere}
+.row-tooltip[hidden]{display:none}
 .row-context{flex-basis:100%;font-weight:600;margin:.25rem 0}
 .record-filters{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}
-@media print{.row-actions,.record-filters{display:none!important}}
+@media print{.row-actions,.row-tooltip,.record-filters{display:none!important}}
 /* Keep the complete record and its actions in reach on narrow screens, without lateral scrolling. */
 @media screen and (max-width:760px){
 .row-records,.row-records tbody,.row-records tr,.row-records td{display:block;width:100%;min-width:0;max-width:none}

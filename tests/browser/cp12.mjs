@@ -56,6 +56,7 @@ try {
     assert(!r.exceptionDetails, JSON.stringify(r.exceptionDetails)); return r.result.value;
   }
   await cdp('Page.enable'); await cdp('Runtime.enable');
+  await cdp('Page.bringToFront');
   report.browser = await cdp('Browser.getVersion');
   async function navigate(url) { await cdp('Page.navigate', { url }); await waitFor(async () => await js(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`)); }
   async function submit(expression, expected) {
@@ -288,7 +289,7 @@ try {
   }
   // Row transactions: use only this runner's isolated synthetic database.
   async function openRow(action, index=0) {
-    await js(`(() => {const f=[...document.querySelectorAll('form[data-entry]')].filter(f=>f.elements.action?.value===${JSON.stringify(action)})[${index}];const d=f.closest('dialog');const b=document.querySelector('[aria-controls="'+d.id+'"]');b.closest('details').open=true;b.focus();b.click()})()`);
+    await js(`(() => {const f=[...document.querySelectorAll('form[data-entry]')].filter(f=>f.elements.action?.value===${JSON.stringify(action)})[${index}];const d=f.closest('dialog');const b=document.querySelector('[aria-controls="'+d.id+'"]');b.focus();b.click()})()`);
     assert(await js(`document.querySelector('dialog[open]').matches(':modal') && document.querySelector('dialog[open]').contains(document.activeElement)`));
     assert(await js(`document.querySelector('dialog[open] [name=id]').type==='hidden' && !document.querySelector('input[name=id]:not([type=hidden])')`),'Identificador ligado a la fila, nunca escrito');
   }
@@ -300,9 +301,8 @@ try {
     await cdp('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
     for(const page of ['clientes','planes','mensualidades','autorizaciones','solicitudes','cuentas']) {
       await navigate(`${base}/?page=${page}`);
-      await js(`[...document.querySelectorAll('.row-actions')].forEach(d=>d.open=true)`);
-      const layout=await js(`(() => {const t=document.querySelector('.row-records');return {width:innerWidth,table:t?{width:t.clientWidth,content:t.scrollWidth}:null,controls:[...document.querySelectorAll('.row-actions summary,.row-actions button')].map(e=>{const r=e.getBoundingClientRect();return {name:e.textContent.trim(),left:r.left,right:r.right,height:r.height}})}})()`);
-      assert(layout.controls.every(r=>r.left>=0&&r.right<=width&&r.height>=44),'Todas las acciones expandidas caben y tienen objetivos táctiles de 44px');
+      const layout=await js(`(() => {const t=document.querySelector('.row-records');return {width:innerWidth,table:t?{width:t.clientWidth,content:t.scrollWidth}:null,controls:[...document.querySelectorAll('.row-actions button')].map(e=>{const r=e.getBoundingClientRect();return {name:e.textContent.trim(),left:r.left,right:r.right,height:r.height}})}})()`);
+      assert(layout.controls.every(r=>r.left>=0&&r.right<=width&&r.height>=44),'Todas las acciones directas caben y tienen objetivos táctiles de 44px');
       if(width===360 && layout.table) assert(layout.table.content<=layout.table.width,'Registros móviles completos sin scroll horizontal');
       report.rowLayouts.push({page,...layout});
       if(page==='clientes'||(width===360&&page==='mensualidades')) await screenshot(`${width}-${page}-acciones.png`);
@@ -313,10 +313,21 @@ try {
     await cdp('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
     await navigate(`${base}/?page=clientes`);
     assert(await js(`!![...document.querySelectorAll('th')].find(h=>h.textContent==='Acciones')`));
-    await js(`document.querySelector('summary').focus()`);
+    assert(await js(`!document.querySelector('.row-actions summary,.row-actions details') && [...document.querySelectorAll('.row-actions button')].every(b=>!b.textContent.trim() && b.getAttribute('aria-label').includes('Registro #') && !!b.querySelector('svg[aria-hidden=true] use'))`),'Acciones directas solo icono, nombre asociado a la fila, sin menú');
+    await js(`document.querySelector('.row-icon-action').scrollIntoView({block:'center'})`);
+    await sleep(150);
+    await js(`document.querySelector('.row-icon-action').focus()`);
+    const tooltip=await js(`(() => {const b=document.activeElement,t=document.getElementById(b.getAttribute('aria-describedby')),r=t.getBoundingClientRect();return {body:t.parentElement===document.body,role:t.role,hidden:t.hidden,text:t.textContent,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight}})()`);
+    assert(tooltip.body && tooltip.role==='tooltip' && !tooltip.hidden && tooltip.text.includes('cliente') && tooltip.left>=0 && tooltip.right<=tooltip.width && tooltip.top>=0 && tooltip.bottom<=tooltip.height,`Tooltip visible con foco: ${JSON.stringify(tooltip)}`);
+    await key('Escape','Escape',27);
+    assert(await js(`document.getElementById(document.activeElement.getAttribute('aria-describedby')).hidden && !document.querySelector('dialog[open]')`),'Escape oculta tooltip sin abrir diálogo');
+    const point=await js(`(() => {document.activeElement.blur();const r=document.querySelector('.row-icon-action').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+    await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+    assert(await js(`!document.getElementById(document.querySelector('.row-icon-action').getAttribute('aria-describedby')).hidden`),'Tooltip visible con hover real');
+    await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+    await js(`document.querySelector('.row-icon-action').focus()`);
     await key('Enter','Enter',13);
-    assert(await js(`document.querySelector('details').open`),'Acciones accesibles con teclado');
-    await openRow('editar');
+    assert(await js(`document.querySelector('dialog[open]').matches(':modal')`),'Acción directa por teclado abre modal');
     for(let i=0;i<8;i++) {
       await key('Tab','Tab',9);
       assert(await js(`document.querySelector('dialog[open]').contains(document.activeElement)`),'Tab permanece en la edición de fila');
@@ -324,6 +335,15 @@ try {
     assert(await js(`document.querySelector('dialog[open] [name=name]').value.includes('Cliente') && !document.querySelector('dialog[open] [name=code]')`),'Nombre precargado y código inmutable');
     await key('Escape','Escape',27);
     assert(await js(`!document.querySelector('dialog[open]') && document.activeElement.hasAttribute('aria-controls')`),'Foco devuelto a la acción de fila');
+    if(width===360) {
+      await cdp('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+      await cdp('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      assert(await js(`document.querySelector('dialog[open]').matches(':modal')`),'Un toque abre directamente el modal existente');
+      await key('Escape','Escape',27);
+    }
+    await cdp('Emulation.setEmulatedMedia',{media:'print'});
+    assert(await js(`getComputedStyle(document.querySelector('.row-actions')).display==='none' && [...document.querySelectorAll('.row-tooltip')].every(t=>getComputedStyle(t).display==='none')`),'Impresión sin acciones ni tooltips');
+    await cdp('Emulation.setEmulatedMedia',{media:''});
     await openRow('archivar');
     assert(await js(`!document.querySelector('dialog[open] form').checkValidity() && document.querySelector('dialog[open] .row-context').textContent.includes('CP12-')`),'Confirmación obligatoria con identidad visible');
     await key('Escape','Escape',27);
@@ -397,12 +417,12 @@ try {
   // The same selected-row edit remains functional with scripting disabled.
   await cdp('Emulation.setScriptExecutionDisabled',{value:true});
   await navigate(`${base}/?page=clientes`);
-  assert(await js(`!document.querySelector('dialog') && !!document.querySelector('details form [name=id][type=hidden]')`));
+  assert(await js(`!document.querySelector('dialog') && !!document.querySelector('.row-actions form [name=id][type=hidden]')`));
   await cdp('Emulation.setDeviceMetricsOverride',{width:360,height:900,deviceScaleFactor:1,mobile:false});
-  const noJSLayout=await js(`(() => {const d=document.querySelector('.row-actions');d.open=true;return [...d.querySelectorAll('input:not([type=hidden]),select,button')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right}})})()`);
+  const noJSLayout=await js(`(() => {const d=document.querySelector('.row-actions');return [...d.querySelectorAll('input:not([type=hidden]),select,button')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right}})})()`);
   assert(noJSLayout.length>0&&noJSLayout.every(r=>r.left>=0&&r.right<=360),'Formularios de fila sin JS caben en móvil');
   await screenshot('360-acciones-sin-js.png');
-  await submit(`(() => {const f=[...document.querySelectorAll('details form')].find(f=>f.elements.action.value==='editar');f.closest('details').open=true;f.elements.contact.value='Contacto sin JS';f.requestSubmit()})()`,`document.querySelector('tbody').textContent.includes('Contacto sin JS')`);
+  await submit(`(() => {const f=[...document.querySelectorAll('.row-actions form')].find(f=>f.elements.action.value==='editar');f.elements.contact.value='Contacto sin JS';f.requestSubmit()})()`,`document.querySelector('tbody').textContent.includes('Contacto sin JS')`);
   await cdp('Emulation.setScriptExecutionDisabled',{value:false});
   await navigate(`${base}/?page=ingreso`);
   await submit(`document.querySelector('[name=email]').value='recepcion@example.invalid';document.querySelector('[name=password]').value='Synthetic-role-only-2026';document.querySelector('[name=email]').form.requestSubmit()`,`location.search==='?page=inicio'`);

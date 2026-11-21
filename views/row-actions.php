@@ -28,7 +28,7 @@ function rowActions(string $page, array $row, ?string $role, array $view): void 
     if (!$canEdit && !($archivable && $role==='admin') && !$canWithdraw && !$canResolve && !$canPermit) {
         echo '<span>Sin acciones disponibles</span>'; return;
     }
-    echo '<details class="row-actions"><summary aria-label="Acciones de '.escape($context).'">Acciones</summary><div class="row-action-list">';
+    echo '<div class="row-actions"><div class="row-action-list">';
     if ($canEdit) {
         rowStart('editar',$row,$context);
         if ($page==='clientes') {
@@ -78,5 +78,5 @@ function rowActions(string $page, array $row, ?string $role, array $view): void 
         rowSelect('active','Estado',['1'=>'Activa','0'=>'Bloqueada'],$row['active']);
         endForm('Aplicar permiso');
     }
-    echo '</div></details>';
+    echo '</div></div>';
 }

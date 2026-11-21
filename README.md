@@ -50,15 +50,23 @@ Requiere `pdo_sqlite`. No usar el mismo archivo/base para pruebas y demostració
 
 ### Acciones por registro
 
-En Clientes, Planes y Mensualidades, abra **Acciones** en la fila elegida para editar los valores precargados; no se escribe el ID. El código del cliente y el cliente de un periodo no se cambian. Solo administración ve **Archivar registro** (exige confirmar la identidad mostrada) y **Restaurar registro**. Los enlaces **Activos / Archivados** permiten recuperar registros sin borrar historial.
+En Clientes, Planes y Mensualidades, pulse el icono de edición de la fila elegida para editar los valores precargados; no se escribe el ID. El código del cliente y el cliente de un periodo no se cambian. Solo administración ve **Archivar registro** (exige confirmar la identidad mostrada) y **Restaurar registro**. Los enlaces **Activos / Archivados** permiten recuperar registros sin borrar historial.
 
 Retirar autorización, resolver solicitud y cambiar permisos/bloquear cuenta también parten de la fila y quedan ligados a su titular/registro. No se ofrece cambiar el propio acceso, resolver solicitudes resueltas ni retirar una autorización ya retirada. El retiro es irreversible. Bitácora, reportes e historial corporal siguen sin acciones para modificar registros anteriores.
 
-En móvil (hasta 760 px), las tablas con acciones presentan cada registro como un bloque de campos etiquetados: los datos y **Acciones** caben sin desplazamiento horizontal. En escritorio se conserva la comparación por columnas. Las tablas de solo lectura no cambian.
+En móvil (hasta 760 px), las tablas con acciones presentan cada registro como un bloque de campos etiquetados: los datos y los botones de acción adyacentes caben sin desplazamiento horizontal. En escritorio se conserva la comparación por columnas. Las tablas de solo lectura no cambian.
 
-Con JavaScript, las acciones abren diálogos nativos con foco contenido y regreso al botón al cancelar/Escape. Sin JavaScript, **Acciones** despliega los mismos formularios HTML completos y precargados, con CSRF e identificadores ocultos. Los errores del servidor siguen siendo respuestas de página (no conservan un borrador tras enviar).
+Con JavaScript, los botones de fila muestran solo iconos distintos para editar, archivar, restaurar, retirar, resolver y permisos, sin desplegable. Cada botón tiene un nombre accesible que incluye la identidad del registro y un tooltip descriptivo en español al pasar el puntero o recibir foco. Los tooltips están fuera de la tabla para evitar recortes, admiten hover y se descartan con Escape. Un clic o toque abre directamente el diálogo nativo existente, con foco contenido y regreso al botón al cancelar/Escape. Sin JavaScript (o sin soporte de dialog), se muestran los mismos formularios HTML completos y precargados, con CSRF e identificadores ocultos. Los errores del servidor siguen siendo respuestas de página (no conservan un borrador tras enviar).
 
-El runner `tests/browser/cp12.mjs` comprueba también límites y tamaño táctil de las acciones expandidas en móvil/escritorio, ausencia de scroll horizontal en registros móviles y controles de fila sin JS dentro del viewport. Incluye regresiones de selección por fila, precarga/escape, archivo/restauración en los tres módulos, confirmación, teclado/foco a 360/1366 px, retiro/resolución/permisos, protección del propio acceso, recepción sin archivo y edición sin JavaScript. Ejecutarlo solo en su base aislada; genera `var/test-browser-*`.
+El runner `tests/browser/cp12.mjs` comprueba también límites y tamaño táctil de las acciones directas en móvil/escritorio, ausencia de scroll horizontal en registros móviles y controles de fila sin JS dentro del viewport. Incluye regresiones de selección por fila, precarga/escape, archivo/restauración en los tres módulos, confirmación, teclado/foco a 360/1366 px, retiro/resolución/permisos, protección del propio acceso, recepción sin archivo y edición sin JavaScript. Ejecutarlo solo en su base aislada; genera `var/test-browser-*`.
+
+### Iconos por fila T1 / S1 (`odd/tasks/iconos-fila.md`)
+
+Sin cambios de datos, roles, autorización ni backend. Se conserva el fallback completo sin JS (más largo que la vista mejorada), el diseño móvil y la omisión de acciones/tooltips al imprimir. Recursos versionados con `fila-20261121-1`.
+
+Validación local aislada: `node 4/prototipo/tests/browser/cp12.mjs` PASS en Chrome 157 a 360/1366 px (tooltip hover/foco/Escape, apertura por teclado y toque, impresión, precarga, confirmación, mutaciones existentes y fallback sin JS); `php 4/prototipo/tests/run.php` PASS 104 comprobaciones; lint PHP sin errores. Firefox no instalado, lector de pantalla no ejercitado, MySQL no repetido. Informe final: `var/test-browser-2026-11-21T17-29-02-720Z/report.json`; se conservan también ejecuciones intermedias fallidas por foco de la página headless, resueltas trayendo el target CDP al frente. Sin AWS, publicación ni commit.
+
+Manifiesto para despliegue del padre (solo runtime): `views/row-actions.php`, `views/page.php`, `public/ui.js`, `public/style.css`, `public/icons.svg`. Desarrollo/evidencia, no desplegar: `tests/browser/cp12.mjs`, este README y `var/test-*`.
 
 ## Arquitectura y controles
 

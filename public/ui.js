@@ -41,9 +41,45 @@ function actionIcon(name) {
   svg.setAttribute('width', '24');
   svg.setAttribute('height', '24');
   const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  use.setAttribute('href', `/icons.svg?v=iconos-20261121-1#${name}`);
+  use.setAttribute('href', `/icons.svg?v=fila-20261121-1#${name}`);
   svg.append(use);
   return svg;
+}
+// A body-level fixed tooltip escapes table overflow. It is hoverable, focusable by
+// its trigger, and dismissible with Escape without opening or submitting anything.
+function attachRowTooltip(trigger, text, id) {
+  const tip = document.createElement('span');
+  tip.id = id;
+  tip.className = 'row-tooltip';
+  tip.setAttribute('role', 'tooltip');
+  tip.textContent = text;
+  tip.hidden = true;
+  document.body.append(tip);
+  trigger.setAttribute('aria-describedby', id);
+  let timer;
+  const hide = () => { clearTimeout(timer); tip.hidden = true; };
+  const show = () => {
+    clearTimeout(timer);
+    tip.hidden = false;
+    const r = trigger.getBoundingClientRect();
+    const t = tip.getBoundingClientRect();
+    tip.style.left = `${Math.max(8, Math.min(innerWidth - t.width - 8, r.left + (r.width - t.width) / 2))}px`;
+    tip.style.top = `${r.top >= t.height + 8 ? r.top - t.height - 4 : r.bottom + 4}px`;
+  };
+  const deferHide = () => { timer = setTimeout(() => {
+    if (document.activeElement !== trigger && !tip.matches(':hover') && !trigger.matches(':hover')) hide();
+  }, 120); };
+  trigger.addEventListener('mouseenter', show);
+  trigger.addEventListener('mouseleave', deferHide);
+  trigger.addEventListener('focus', show);
+  trigger.addEventListener('blur', hide);
+  trigger.addEventListener('click', hide);
+  tip.addEventListener('mouseenter', () => clearTimeout(timer));
+  tip.addEventListener('mouseleave', deferHide);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') hide(); });
+  const reposition = () => { if (!tip.hidden) show(); };
+  window.addEventListener('scroll', reposition, true);
+  window.addEventListener('resize', reposition);
 }
 // Progressive enhancement: server-rendered forms remain usable without JavaScript.
 document.addEventListener('DOMContentLoaded', () => {
@@ -72,16 +108,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = action === 'buscar' ? 'secondary form-trigger' : 'form-trigger';
-    trigger.textContent = title;
-    if (context) trigger.setAttribute('aria-label', `${title} · ${context}`);
-    const symbols = { buscar: 'search', crear: page === 'ingreso' ? 'login' : 'plus', editar: 'edit', retirar: 'stop', resolver: 'check', permiso: 'key', archivar: 'stop', restaurar: 'plus' };
+    if (context) {
+      trigger.classList.add('row-icon-action');
+      trigger.setAttribute('aria-label', `${title} · ${context}`);
+      attachRowTooltip(trigger, title, `${dialog.id}-ayuda`);
+    } else trigger.textContent = title;
+    const symbols = { buscar: 'search', crear: page === 'ingreso' ? 'login' : 'plus', editar: 'edit', retirar: 'stop', resolver: 'check', permiso: 'key', archivar: 'archive', restaurar: 'restore' };
     trigger.prepend(actionIcon(symbols[action] || 'file'));
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', dialog.id);
     // Existing headings describe these same actions in the no-JS presentation.
     if (form.previousElementSibling?.tagName === 'H3') form.previousElementSibling.hidden = true;
     form.before(trigger, dialog);
-    // Keep row dialogs outside scrolling tables/details so native modal layout is unconstrained.
+    // Keep row dialogs outside scrolling tables so native modal layout is unconstrained.
     if (context) document.body.append(dialog);
     dialog.append(heading, form);
     const note = document.createElement('p');
